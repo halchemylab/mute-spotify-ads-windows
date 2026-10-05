@@ -16,14 +16,21 @@ if sys.platform == "win32":
 
 
 POLL_INTERVAL_SECONDS = 0.5
+MAX_AD_DURATION_SECONDS = 60
 STATS_PATH = Path(os.environ.get("MUTE_SPOTIFY_STATS_PATH") or Path(__file__).resolve().parent / "stats.txt")
 MUTEX_NAME = "Local\\MuteSpotifyAdsWindows"
 
-def is_ad(title: str, artist: str) -> bool:
-    """Conservative Spotify SMTC metadata rules; tune these with --debug output."""
+def is_ad(title: str, artist: str, album: str, duration_seconds: float | None) -> bool:
+    """Match common ad labels or short Spotify items without an album."""
     title = title.strip().casefold()
     artist = artist.strip().casefold()
-    return title in {"advertisement", "spotify", "—"} and artist in {"", "spotify", "universal so cal", "ncis: new york"}
+    if title in {"advertisement", "spotify"} and artist in {"", "spotify"}:
+        return True
+    return (
+        not album.strip()
+        and duration_seconds is not None
+        and 0 < duration_seconds < MAX_AD_DURATION_SECONDS
+    )
 
 
 class SingleInstance:
@@ -252,14 +259,15 @@ async def run(debug: bool, notifications: bool) -> None:
 
             if metadata is not None:
                 title, artist, status = metadata[:3]
+                album, duration = metadata[3], metadata[7]
                 if status == media_control.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING:
-                    if is_ad(title, artist):
+                    if is_ad(title, artist, album, duration):
                         mute.mute_current_sessions()  # Also catches newly spawned sessions.
                         if ad_started is None and mute.owned:
                             ad_started = time.monotonic()
                             print("Ad found; Spotify muted.", flush=True)
                             notify(notifications, "Spotify ad muted", "Spotify audio is muted until music resumes.")
-                    elif title.strip() or artist.strip():
+                    elif album.strip() and (title.strip() or artist.strip()):
                         finish_ad("Music resumed; Spotify audio restored.")
             # Paused, stopped, and missing metadata do not imply a new track.
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
