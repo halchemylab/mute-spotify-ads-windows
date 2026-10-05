@@ -1,0 +1,6 @@
+pycaw>=20260927
+psutil>=7.0
+winrt-Windows.Media.Control>=3.2.1
+winrt-Windows.Foundation>=3.2.1
+winrt-Windows.Foundation.Collections>=3.2.1
+winotify>=1.1.0
