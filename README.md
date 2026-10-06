@@ -22,6 +22,8 @@ python mute_spotify_ads.py --debug
 
 `--debug` prints the raw title, artist, playback status, album fields, subtitle, playback type, and duration whenever Spotify's media session changes. Playback type may show `None` if its optional WinRT module is unavailable. To adjust ad matching, edit `is_ad()` and `MAX_AD_DURATION_SECONDS` in the script. The rule recognizes common ad labels and items with **no album** whose reported duration is **under 60 seconds**. It restores audio when a playing item has an album. It only acts while playback status is `Playing`; pausing does not change the mute state. Press **Ctrl+C** to stop and restore any Spotify sessions the script muted. A second copy of the script exits with an already-running message.
 
+Terminal messages include a local time in `[HH:MM:SS]` format. When an ad ends, the restoration message shows how many seconds it was muted.
+
 After each muted ad, the script adds its elapsed seconds to `stats.txt` beside the script and prints the total. To store it elsewhere, set `MUTE_SPOTIFY_STATS_PATH` to a **full file path**, for example:
 
 ```powershell

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import ctypes
+from datetime import datetime
 import os
 from pathlib import Path
 import sys
@@ -19,6 +20,11 @@ POLL_INTERVAL_SECONDS = 0.5
 MAX_AD_DURATION_SECONDS = 60
 STATS_PATH = Path(os.environ.get("MUTE_SPOTIFY_STATS_PATH") or Path(__file__).resolve().parent / "stats.txt")
 MUTEX_NAME = "Local\\MuteSpotifyAdsWindows"
+
+
+def log(message: str) -> None:
+    print(f"[{datetime.now():%H:%M:%S}] {message}", flush=True)
+
 
 def is_ad(title: str, artist: str, album: str, duration_seconds: float | None) -> bool:
     """Match common ad labels or short Spotify items without an album."""
@@ -73,7 +79,7 @@ def spotify_audio_sessions(audio_utilities):
             if process and process.name().casefold() == "spotify.exe":
                 result.append(session)
         except Exception as exc:
-            print(f"Could not inspect an audio session: {exc}", flush=True)
+            log(f"Could not inspect an audio session: {exc}")
     return result
 
 
@@ -87,7 +93,7 @@ class SpotifyMute:
         try:
             sessions = spotify_audio_sessions(self.audio_utilities)
         except Exception as exc:
-            print(f"Could not list audio sessions: {exc}", flush=True)
+            log(f"Could not list audio sessions: {exc}")
             return
         for session in sessions:
             try:
@@ -102,7 +108,7 @@ class SpotifyMute:
                     volume.SetMute(1, None)
                     self.owned[key] = volume
             except Exception as exc:
-                print(f"Could not mute a Spotify audio session: {exc}", flush=True)
+                log(f"Could not mute a Spotify audio session: {exc}")
 
     def restore(self) -> None:
         for key, volume in list(self.owned.items()):
@@ -110,7 +116,7 @@ class SpotifyMute:
                 volume.SetMute(0, None)
             except Exception as exc:
                 # The owning Spotify process may already have exited.
-                print(f"Could not restore a closed Spotify audio session: {exc}", flush=True)
+                log(f"Could not restore a closed Spotify audio session: {exc}")
             finally:
                 del self.owned[key]
 
@@ -121,7 +127,7 @@ def read_stats() -> int:
     except FileNotFoundError:
         return 0
     except (OSError, ValueError) as exc:
-        print(f"Could not read stats from {STATS_PATH}: {exc}; starting at zero.", flush=True)
+        log(f"Could not read stats from {STATS_PATH}: {exc}; starting at zero.")
         return 0
 
 
@@ -131,7 +137,7 @@ def add_stats(seconds: int) -> int:
         STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
         STATS_PATH.write_text(f"{total}\n", encoding="utf-8")
     except OSError as exc:
-        print(f"Could not write stats to {STATS_PATH}: {exc}", flush=True)
+        log(f"Could not write stats to {STATS_PATH}: {exc}")
     return total
 
 
@@ -148,7 +154,7 @@ def notify(enabled: bool, title: str, message: str) -> None:
 
         Notification(app_id="Mute Spotify Ads", title=title, msg=message).show()
     except Exception as exc:
-        print(f"Could not show notification: {exc}", flush=True)
+        log(f"Could not show notification: {exc}")
 
 
 async def spotify_media(manager):
@@ -177,7 +183,7 @@ async def spotify_media(manager):
                 duration = None
             return title, artist, playback, album, album_artist, subtitle, playback_type, duration
         except Exception as exc:
-            print(f"Could not read Spotify media session: {exc}", flush=True)
+            log(f"Could not read Spotify media session: {exc}")
     return None
 
 
@@ -201,26 +207,26 @@ async def run(debug: bool, notifications: bool) -> None:
         mute.restore()
         elapsed = max(0, round(time.monotonic() - ad_started))
         ad_started = None
-        print(reason, flush=True)
+        log(f"{reason} Ad muted for {elapsed} seconds.")
         total = add_stats(elapsed)
         message = total_message(total)
-        print(message, flush=True)
+        log(message)
         if reason.startswith("Music resumed"):
             notify(notifications, "Spotify music resumed", message)
 
-    print("Watching Spotify desktop ads. Press Ctrl+C to stop.", flush=True)
+    log("Watching Spotify desktop ads. Press Ctrl+C to stop.")
     try:
         while True:
             try:
                 running = spotify_running(psutil)
             except Exception as exc:
-                print(f"Could not check whether Spotify is running: {exc}", flush=True)
+                log(f"Could not check whether Spotify is running: {exc}")
                 running = True  # Do not change mute state on an uncertain result.
 
             if not running:
                 finish_ad("Spotify closed; its audio sessions were restored.")
                 if spotify_was_running is not False:
-                    print("Spotify is not running; waiting for it to start.", flush=True)
+                    log("Spotify is not running; waiting for it to start.")
                 spotify_was_running = False
                 manager = None
                 last_debug = unseen
@@ -239,21 +245,20 @@ async def run(debug: bool, notifications: bool) -> None:
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 if error != last_media_error:
-                    print(f"Could not query Windows media sessions: {error}", flush=True)
+                    log(f"Could not query Windows media sessions: {error}")
                 last_media_error = error
                 manager = None
                 metadata = None
 
             if debug and metadata != last_debug:
                 if metadata is None:
-                    print("SMTC: no Spotify media session", flush=True)
+                    log("SMTC: no Spotify media session")
                 else:
                     title, artist, status, album, album_artist, subtitle, playback_type, duration = metadata
-                    print(
+                    log(
                         f"SMTC: title={title!r}, artist={artist!r}, playback_status={status!s}, "
                         f"album={album!r}, album_artist={album_artist!r}, subtitle={subtitle!r}, "
                         f"playback_type={playback_type!s}, duration_seconds={duration!r}",
-                        flush=True,
                     )
                 last_debug = metadata
 
@@ -265,7 +270,7 @@ async def run(debug: bool, notifications: bool) -> None:
                         mute.mute_current_sessions()  # Also catches newly spawned sessions.
                         if ad_started is None and mute.owned:
                             ad_started = time.monotonic()
-                            print("Ad found; Spotify muted.", flush=True)
+                            log("Ad found; Spotify muted.")
                             notify(notifications, "Spotify ad muted", "Spotify audio is muted until music resumes.")
                     elif album.strip() and (title.strip() or artist.strip()):
                         finish_ad("Music resumed; Spotify audio restored.")
@@ -287,14 +292,14 @@ def main() -> int:
     try:
         instance = SingleInstance()
     except (OSError, RuntimeError) as exc:
-        print(exc, flush=True)
+        log(str(exc))
         return 1
     try:
         asyncio.run(run(args.debug, args.notify))
     except KeyboardInterrupt:
-        print("Stopped. Spotify audio restored.", flush=True)
+        log("Stopped. Spotify audio restored.")
     except ImportError as exc:
-        print(f"Missing dependency: {exc}. Run: pip install -r requirements.txt", flush=True)
+        log(f"Missing dependency: {exc}. Run: pip install -r requirements.txt")
         return 1
     finally:
         instance.close()
