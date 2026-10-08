@@ -18,13 +18,14 @@ Keep `mute_spotify_ads.py` and `requirements.txt` in the same folder. Start Spot
 python mute_spotify_ads.py
 python mute_spotify_ads.py --notify
 python mute_spotify_ads.py --debug
+python mute_spotify_ads.py --stats
 ```
 
 `--debug` prints the raw title, artist, playback status, album fields, subtitle, playback type, and duration whenever Spotify's media session changes. Playback type may show `None` if its optional WinRT module is unavailable. To adjust ad matching, edit `is_ad()` and `MAX_AD_DURATION_SECONDS` in the script. The rule recognizes common ad labels and items with **no album** whose reported duration is **under 60 seconds**. It restores audio when a playing item has an album. It only acts while playback status is `Playing`; pausing does not change the mute state. Press **Ctrl+C** to stop and restore any Spotify sessions the script muted. A second copy of the script exits with an already-running message.
 
 Terminal messages include a local time in `[HH:MM:SS]` format and an `INFO`, `WARN`, or `ERROR` level. Repeated polling errors are printed once per distinct error until that operation succeeds again, when a recovery message appears. When an ad ends, one line reports why audio was restored, how long the ad was muted, and the cumulative muted time.
 
-After each muted ad, the script adds its elapsed seconds to `stats.txt` beside the script and includes the total in the restoration message. To store it elsewhere, set `MUTE_SPOTIFY_STATS_PATH` to a **full file path**, for example:
+After each muted ad, the script appends its completion time and muted seconds to `stats.txt` beside the script and includes the all-time total in the restoration message. Run `python mute_spotify_ads.py --stats` to see ad counts and muted time for today, this week (Monday through Sunday), and all time. The command does not start the ad watcher. An existing `stats.txt` containing just a number remains valid: that number is included in the all-time duration, while its ad count and dates remain unknown. To store stats elsewhere, set `MUTE_SPOTIFY_STATS_PATH` to a **full file path**, for example:
 
 ```powershell
 $env:MUTE_SPOTIFY_STATS_PATH = "$env:USERPROFILE\Documents\spotify-ad-stats.txt"

@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import ctypes
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
 import os
 from pathlib import Path
 import sys
@@ -151,24 +152,87 @@ class SpotifyMute:
                 del self.owned[key]
 
 
-def read_stats() -> int:
+def read_stats_history() -> tuple[int, list[tuple[datetime, int]], bool]:
+    """Read legacy total seconds and timestamped ad entries from stats.txt."""
     try:
-        return max(0, int(STATS_PATH.read_text(encoding="utf-8").strip()))
+        lines = STATS_PATH.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
-        return 0
-    except (OSError, ValueError) as exc:
+        return 0, [], False
+    except OSError as exc:
         log(f"Could not read stats from {STATS_PATH}: {exc}; starting at zero.", "WARN")
-        return 0
+        return 0, [], False
+
+    legacy_seconds = 0
+    has_legacy = False
+    entries: list[tuple[datetime, int]] = []
+    for number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            if number == 1 and line.strip().isdigit():
+                legacy_seconds = int(line.strip())
+                has_legacy = True
+                continue
+            item = json.loads(line)
+            stamp = datetime.fromisoformat(item["at"])
+            seconds = item["seconds"]
+            if not isinstance(seconds, int) or isinstance(seconds, bool) or seconds < 0:
+                raise ValueError("seconds must be a nonnegative integer")
+            entries.append((stamp, seconds))
+        except (ValueError, TypeError, KeyError) as exc:
+            log(f"Ignoring invalid stats line {number} in {STATS_PATH}: {exc}", "WARN")
+    return legacy_seconds, entries, has_legacy
+
+
+def read_stats() -> int:
+    legacy_seconds, entries, _ = read_stats_history()
+    return legacy_seconds + sum(seconds for _, seconds in entries)
 
 
 def add_stats(seconds: int) -> int:
     total = read_stats() + seconds
     try:
         STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        STATS_PATH.write_text(f"{total}\n", encoding="utf-8")
+        previous = STATS_PATH.read_text(encoding="utf-8") if STATS_PATH.exists() else ""
+        entry = json.dumps({"at": datetime.now().astimezone().isoformat(), "seconds": seconds})
+        with STATS_PATH.open("a", encoding="utf-8") as stats_file:
+            if previous and not previous.endswith("\n"):
+                stats_file.write("\n")
+            stats_file.write(entry + "\n")
     except OSError as exc:
         log(f"Could not write stats to {STATS_PATH}: {exc}", "WARN")
     return total
+
+
+def format_duration(seconds: int) -> str:
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if seconds or not parts:
+        parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
+def show_stats() -> None:
+    legacy_seconds, entries, has_legacy = read_stats_history()
+    today = datetime.now().astimezone().date()
+    week_start = today - timedelta(days=today.weekday())
+    today_entries = [(at, seconds) for at, seconds in entries if at.astimezone().date() == today]
+    week_entries = [(at, seconds) for at, seconds in entries if week_start <= at.astimezone().date() <= today]
+
+    for label, selected in (("Today", today_entries), ("This week", week_entries), ("All time", entries)):
+        duration = sum(seconds for _, seconds in selected)
+        if label == "All time":
+            duration += legacy_seconds
+        count = len(selected)
+        count_label = "recorded ads" if label == "All time" and has_legacy else "ads muted"
+        print(f"{label + ':':<11}{count} {count_label} · {format_duration(duration)}")
+    if has_legacy:
+        print(f"All-time duration includes {format_duration(legacy_seconds)} from the previous stats file; its ad count and dates are unknown.")
 
 
 def total_message(seconds: int) -> str:
@@ -319,7 +383,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Mute Spotify desktop audio during ads.")
     parser.add_argument("--notify", action="store_true", help="Show Windows desktop notifications")
     parser.add_argument("--debug", action="store_true", help="Print Spotify SMTC metadata on every change")
+    parser.add_argument("--stats", action="store_true", help="Show ad counts and muted time for today, this week, and all time")
     args = parser.parse_args()
+    if args.stats:
+        show_stats()
+        return 0
     if sys.platform != "win32":
         parser.error("This script requires Windows 10 or 11.")
 
