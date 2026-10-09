@@ -12,6 +12,8 @@ from pathlib import Path
 import sys
 import time
 
+from terminal_display import TerminalDisplay
+
 if sys.platform == "win32":
     # pycaw/comtypes and WinRT are used on the same asyncio thread.
     sys.coinit_flags = 0  # COINIT_MULTITHREADED
@@ -23,8 +25,14 @@ STATS_PATH = Path(os.environ.get("MUTE_SPOTIFY_STATS_PATH") or Path(__file__).re
 MUTEX_NAME = "Local\\MuteSpotifyAdsWindows"
 
 
+_display: TerminalDisplay | None = None
+
+
 def log(message: str, level: str = "INFO") -> None:
-    print(f"[{datetime.now():%H:%M:%S}] {level} {message}", flush=True)
+    if _display is not None:
+        _display.event(message, level)
+    else:
+        print(f"[{datetime.now():%H:%M:%S}] {level} {message}", flush=True)
 
 
 class PollErrors:
@@ -288,10 +296,13 @@ async def spotify_media(manager, errors: PollErrors):
 
 
 async def run(debug: bool, notifications: bool) -> None:
+    global _display
     from winrt.windows.media import control as media_control
     from pycaw.pycaw import AudioUtilities
     import psutil
 
+    display = TerminalDisplay()
+    _display = display
     errors = PollErrors()
     mute = SpotifyMute(AudioUtilities, errors)
     ad_started: float | None = None
@@ -315,14 +326,17 @@ async def run(debug: bool, notifications: bool) -> None:
             notify(notifications, "Spotify music resumed", message)
 
     log("Watching Spotify desktop ads. Press Ctrl+C to stop.")
+    display.update("Waiting for Spotify")
     try:
         while True:
             try:
                 running = spotify_running(psutil)
+                process_check_ok = True
                 errors.recovered("Spotify process check")
             except Exception as exc:
                 errors.report("Spotify process check", exc)
                 running = True  # Do not change mute state on an uncertain result.
+                process_check_ok = False
 
             if not running:
                 finish_ad("Spotify closed; its audio sessions were restored.")
@@ -331,9 +345,12 @@ async def run(debug: bool, notifications: bool) -> None:
                 spotify_was_running = False
                 manager = None
                 last_debug = unseen
+                display.update("Waiting for Spotify")
                 await asyncio.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
+            if process_check_ok and spotify_was_running is not True:
+                log("Spotify connected.")
             spotify_was_running = True
             try:
                 if manager is None:
@@ -372,11 +389,26 @@ async def run(debug: bool, notifications: bool) -> None:
                             notify(notifications, "Spotify ad muted", "Spotify audio is muted until music resumes.")
                     elif album.strip() and (title.strip() or artist.strip()):
                         finish_ad("Music resumed; Spotify audio restored.")
+            if errors.active:
+                display.update("Error", detail=next(iter(errors.active)) + " failed")
+            elif metadata is None:
+                display.update("Waiting for Spotify", detail="Waiting for media session")
+            else:
+                track = " — ".join(part for part in (title.strip(), artist.strip()) if part)
+                if status != media_control.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING:
+                    display.update("Paused", "" if ad_started is not None else track,
+                                   "Spotify audio muted" if ad_started is not None else "")
+                elif ad_started is not None:
+                    display.update("Ad muted")
+                else:
+                    display.update("Monitoring music", track)
             # Paused, stopped, and missing metadata do not imply a new track.
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
     finally:
         finish_ad("Stopping; Spotify audio restored.")
         mute.restore()
+        display.update("Waiting for Spotify")
+        _display = None
 
 
 def main() -> int:
