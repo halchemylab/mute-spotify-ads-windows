@@ -19,9 +19,12 @@ python mute_spotify_ads.py
 python mute_spotify_ads.py --notify
 python mute_spotify_ads.py --debug
 python mute_spotify_ads.py --stats
+python mute_spotify_ads.py --allow-artist "My Podcast" --allow-title "Short Track"
 ```
 
 `--debug` prints the raw title, artist, playback status, album fields, subtitle, playback type, and duration whenever Spotify's media session changes. Playback type may show `None` if its optional WinRT module is unavailable. To adjust ad matching, edit `is_ad()` and `MAX_AD_DURATION_SECONDS` in the script. The rule recognizes common ad labels and items with **no album** whose reported duration is **under 60 seconds**. It restores audio when a playing item has an album. It only acts while playback status is `Playing`; pausing does not change the mute state. Press **Ctrl+C** to stop and restore any Spotify sessions the script muted. A second copy of the script exits with an already-running message.
+
+Use `--allow-artist` for a podcast or artist you never want muted, or `--allow-title` for a specific track or episode. You can repeat either option. Matches use the complete name, ignoring case and spaces at the ends; use `--debug` to see the exact names Spotify reports. An allowed playing item restores audio if the preceding item was muted. Add these options to your startup task or shortcut arguments too if you run the script at login.
 
 In an interactive terminal, a compact status panel shows whether the watcher is waiting, monitoring music, muting an ad, paused, or reporting an error. It shows the current track when available and the five most recent timestamped events. The panel redraws only when its content changes. Set `NO_COLOR=1` to disable its cyan accent. Redirected output, unsupported terminals, and narrow windows use timestamped plain text instead. Repeated polling errors appear once per distinct error until that operation succeeds again, when a recovery message appears. When an ad ends, one event reports why audio was restored, how long the ad was muted, and the cumulative muted time.
 

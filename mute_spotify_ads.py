@@ -66,6 +66,11 @@ def is_ad(title: str, artist: str, album: str, duration_seconds: float | None) -
     )
 
 
+def is_allowed(title: str, artist: str, allowed_titles: set[str], allowed_artists: set[str]) -> bool:
+    """Match a user's exact title or artist, ignoring case and outer whitespace."""
+    return title.strip().casefold() in allowed_titles or artist.strip().casefold() in allowed_artists
+
+
 class SingleInstance:
     def __init__(self) -> None:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -295,8 +300,16 @@ async def spotify_media(manager, errors: PollErrors):
     return None
 
 
-async def run(debug: bool, notifications: bool) -> None:
+async def run(
+    debug: bool,
+    notifications: bool,
+    allowed_titles: set[str] | None = None,
+    allowed_artists: set[str] | None = None,
+) -> None:
     global _display
+
+    allowed_titles = allowed_titles or set()
+    allowed_artists = allowed_artists or set()
     from winrt.windows.media import control as media_control
     from pycaw.pycaw import AudioUtilities
     import psutil
@@ -381,7 +394,9 @@ async def run(debug: bool, notifications: bool) -> None:
                 title, artist, status = metadata[:3]
                 album, duration = metadata[3], metadata[7]
                 if status == media_control.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING:
-                    if is_ad(title, artist, album, duration):
+                    if is_allowed(title, artist, allowed_titles, allowed_artists):
+                        finish_ad("Allowed item started; Spotify audio restored.")
+                    elif is_ad(title, artist, album, duration):
                         mute.mute_current_sessions()  # Also catches newly spawned sessions.
                         if ad_started is None and mute.owned:
                             ad_started = time.monotonic()
@@ -416,6 +431,10 @@ def main() -> int:
     parser.add_argument("--notify", action="store_true", help="Show Windows desktop notifications")
     parser.add_argument("--debug", action="store_true", help="Print Spotify SMTC metadata on every change")
     parser.add_argument("--stats", action="store_true", help="Show ad counts and muted time for today, this week, and all time")
+    parser.add_argument("--allow-artist", action="append", default=[], metavar="ARTIST",
+                        help="Never mute this exact artist name (repeatable)")
+    parser.add_argument("--allow-title", action="append", default=[], metavar="TITLE",
+                        help="Never mute this exact title (repeatable)")
     args = parser.parse_args()
     if args.stats:
         show_stats()
@@ -429,7 +448,9 @@ def main() -> int:
         log(str(exc), "ERROR")
         return 1
     try:
-        asyncio.run(run(args.debug, args.notify))
+        allowed_titles = {value.strip().casefold() for value in args.allow_title if value.strip()}
+        allowed_artists = {value.strip().casefold() for value in args.allow_artist if value.strip()}
+        asyncio.run(run(args.debug, args.notify, allowed_titles, allowed_artists))
     except KeyboardInterrupt:
         log("Stopped. Spotify audio restored.")
     except ImportError as exc:
