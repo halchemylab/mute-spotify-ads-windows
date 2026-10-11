@@ -10,7 +10,7 @@ Use Windows 10 or 11 with **Python 3.10–3.14**. The dependencies use the `winr
 python -m pip install -r requirements.txt
 ```
 
-Keep `mute_spotify_ads.py` and `requirements.txt` in the same folder. Start Spotify's desktop app (Microsoft Store or standalone installer).
+Keep `mute_spotify_ads.py` and `requirements.txt` in the same folder. Use Spotify's desktop app (Microsoft Store or standalone installer). You can start the watcher before opening Spotify or starting playback. While Spotify is open but its media session is unavailable, the watcher refreshes Windows media discovery every 15 seconds; once connected, normal half-second polling continues.
 
 ## Run
 

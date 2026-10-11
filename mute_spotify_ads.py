@@ -20,6 +20,7 @@ if sys.platform == "win32":
 
 
 POLL_INTERVAL_SECONDS = 0.5
+MEDIA_SESSION_RETRY_SECONDS = 15
 MAX_AD_DURATION_SECONDS = 60
 STATS_PATH = Path(os.environ.get("MUTE_SPOTIFY_STATS_PATH") or Path(__file__).resolve().parent / "stats.txt")
 MUTEX_NAME = "Local\\MuteSpotifyAdsWindows"
@@ -323,6 +324,7 @@ async def run(
     last_debug = unseen
     spotify_was_running: bool | None = None
     manager = None
+    manager_retry_at: float | None = None
 
     def finish_ad(reason: str) -> None:
         nonlocal ad_started
@@ -357,6 +359,7 @@ async def run(
                     log("Spotify is not running; waiting for it to start.")
                 spotify_was_running = False
                 manager = None
+                manager_retry_at = None
                 last_debug = unseen
                 display.update("Waiting for Spotify")
                 await asyncio.sleep(POLL_INTERVAL_SECONDS)
@@ -366,16 +369,27 @@ async def run(
                 log("Spotify connected.")
             spotify_was_running = True
             try:
+                # Spotify may launch before it publishes a media session. Refresh
+                # discovery periodically instead of holding an empty manager forever.
+                if manager_retry_at is not None and time.monotonic() >= manager_retry_at:
+                    manager = None
+                    manager_retry_at = None
                 if manager is None:
                     manager = await asyncio.wait_for(
                         media_control.GlobalSystemMediaTransportControlsSessionManager.request_async(),
                         timeout=3,
                     )
                 metadata = await spotify_media(manager, errors)
+                if metadata is None:
+                    if manager_retry_at is None:
+                        manager_retry_at = time.monotonic() + MEDIA_SESSION_RETRY_SECONDS
+                else:
+                    manager_retry_at = None
                 errors.recovered("Windows media session query")
             except Exception as exc:
                 errors.report("Windows media session query", exc)
                 manager = None
+                manager_retry_at = None
                 metadata = None
 
             if debug and metadata != last_debug:
